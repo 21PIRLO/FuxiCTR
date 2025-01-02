@@ -106,3 +106,9 @@ venv.bak/
 _build
 checkpoints
 *.csv
+
+# Debug & VSCode
+.vscode
+debug/*
+!debug/utils
+!debug/experiments
