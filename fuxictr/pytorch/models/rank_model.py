@@ -61,6 +61,20 @@ class BaseModel(nn.Module):
         self.checkpoint = os.path.abspath(os.path.join(self.model_dir, self.model_id + ".model"))
         self.validation_metrics = kwargs["metrics"]
 
+    def _log_tensor_stats(self, tag, tensor):
+        """
+        Unified tensor stats logger for debugging.
+        Prints min, max, mean, and a 'positive_ratio' which equals mean by design (for labels),
+        and remains a simple mean proxy for sample_weights to keep the log format consistent.
+        """
+        if self._verbose > 0:
+            print(
+                f"[{tag}] min={tensor.min().item():.4f}, "
+                f"max={tensor.max().item():.4f}, "
+                f"mean={tensor.float().mean().item():.4f}, "
+                f"positive_ratio={tensor.float().mean().item():.4f}"
+            )
+
     def compile(self, optimizer, loss, lr):
         self.optimizer = get_optimizer(optimizer, self.parameters(), lr)
         self.loss_fn = get_loss(loss)
@@ -85,12 +99,50 @@ class BaseModel(nn.Module):
                             reg_term += (net_lambda / net_p) * torch.norm(param, net_p) ** net_p
         return reg_term
 
-    def add_loss(self, return_dict, y_true):
-        loss = self.loss_fn(return_dict["y_pred"], y_true, reduction='mean')
+    def add_loss(self, return_dict, y_true, sample_weights=None):
+        # This method implements a manual weighted average of the loss. It first
+        # calculates the loss for each sample (`reduction='none'`) and then computes
+        # the weighted average using the provided `sample_weights`. This approach is generic
+        # and works for any loss function.
+        #
+        # ===================== More Efficient Alternative =====================
+        # If `self.loss_fn` supports a `weight` parameter (e.g.,
+        # `F.binary_cross_entropy`), it's more efficient to pass sample_weights directly.
+        # The code would look like this:
+        #
+        # def add_loss(self, return_dict, y_true, sample_weights=None):
+        #     if sample_weights is not None:
+        #         # The `weight` param in PyTorch often expects a 1D tensor
+        #         # (batch_size,). Input `sample_weights` may be (batch_size, 1),
+        #         # so we use .squeeze().
+        #         return self.loss_fn(
+        #             return_dict["y_pred"],
+        #             y_true,
+        #             weight=sample_weights.squeeze(),
+        #             reduction='mean',
+        #         )
+        #     else:
+        #         return self.loss_fn(return_dict["y_pred"], y_true, reduction='mean')
+        #
+        # --- Note on BCEWithLogitsLoss ---
+        # For better numerical stability in binary classification, consider using
+        # `nn.BCEWithLogitsLoss`. If you do, remember to:
+        #   1. Remove the final Sigmoid activation from your model's output.
+        #   2. Pass the raw logits to the loss function.
+        # This loss also supports the `weight` parameter.
+        # =====================================================================
+        loss = self.loss_fn(return_dict["y_pred"], y_true, reduction='none')
+        if sample_weights is not None:
+            loss = torch.sum(loss * sample_weights) / (torch.sum(sample_weights) + 1e-8)
+        else:
+            loss = loss.mean()
         return loss
 
-    def compute_loss(self, return_dict, y_true):
-        loss = self.add_loss(return_dict, y_true) + self.regularization_loss()
+    def compute_loss(self, return_dict, y_true, sample_weights=None):
+        loss = (
+            self.add_loss(return_dict, y_true, sample_weights)
+            + self.regularization_loss()
+        )
         return loss
 
     def reset_parameters(self):
@@ -120,13 +172,34 @@ class BaseModel(nn.Module):
             X_dict[feature] = inputs[feature].to(self.device)
         return X_dict
 
+    def get_sample_weights(self, inputs):
+        """
+        Get sample weights from batch inputs.
+        If feature_map.labels has two elements, the second one is treated as sample weight.
+        Also logs the same stats format as labels for consistency.
+        """
+        labels = self.feature_map.labels
+        if len(labels) == 2:
+            weight_key = labels[1]
+            if weight_key in inputs:
+                weights = (inputs[weight_key] + 1).to(self.device)
+                w_tensor = weights.float().view(-1, 1)
+                # Log weight stats (consistent with LABEL logging format)
+                self._log_tensor_stats("SAMPLE WEIGHT", w_tensor)
+                return w_tensor
+        return None
+
     def get_labels(self, inputs):
         """ Please override get_labels() when using multiple labels!
         """
         labels = self.feature_map.labels
         y = inputs[labels[0]].to(self.device)
-        return y.float().view(-1, 1)
-                
+        y_tensor = y.float().view(-1, 1)
+
+        # Log label stats
+        self._log_tensor_stats("SAMPLE LABEL", y_tensor)
+        return y_tensor
+
     def get_group_id(self, inputs):
         return inputs[self.feature_map.group_id]
 
@@ -198,7 +271,8 @@ class BaseModel(nn.Module):
         self.optimizer.zero_grad()
         return_dict = self.forward(batch_data)
         y_true = self.get_labels(batch_data)
-        loss = self.compute_loss(return_dict, y_true)
+        sample_weights = self.get_sample_weights(batch_data)
+        loss = self.compute_loss(return_dict, y_true, sample_weights)
         loss.backward()
         nn.utils.clip_grad_norm_(self.parameters(), self._max_gradient_norm)
         self.optimizer.step()
