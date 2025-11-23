@@ -1,7 +1,7 @@
 # =========================================================================
 # Copyright (C) 2024. The FuxiCTR Library. All rights reserved.
 # Copyright (C) 2022. Huawei Technologies Co., Ltd. All rights reserved.
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -29,19 +29,19 @@ from tqdm import tqdm
 
 
 class BaseModel(nn.Module):
-    def __init__(self, 
-                 feature_map, 
-                 model_id="BaseModel", 
-                 task="binary_classification", 
-                 gpu=-1, 
-                 monitor="AUC", 
-                 save_best_only=True, 
-                 monitor_mode="max", 
-                 early_stop_patience=2, 
-                 eval_steps=None, 
-                 embedding_regularizer=None, 
-                 net_regularizer=None, 
-                 reduce_lr_on_plateau=True, 
+    def __init__(self,
+                 feature_map,
+                 model_id="BaseModel",
+                 task="binary_classification",
+                 gpu=-1,
+                 monitor="AUC",
+                 save_best_only=True,
+                 monitor_mode="max",
+                 early_stop_patience=2,
+                 eval_steps=None,
+                 embedding_regularizer=None,
+                 net_regularizer=None,
+                 reduce_lr_on_plateau=True,
                  **kwargs):
         super(BaseModel, self).__init__()
         self.device = get_device(gpu)
@@ -138,12 +138,12 @@ class BaseModel(nn.Module):
             reduced_lr = max(param_group["lr"] * factor, min_lr)
             param_group["lr"] = reduced_lr
         return reduced_lr
-           
+
     def fit(self, data_generator, epochs=1, validation_data=None,
             max_gradient_norm=10., **kwargs):
         self.valid_gen = validation_data
         self._max_gradient_norm = max_gradient_norm
-        self._best_metric = np.Inf if self._monitor_mode == "min" else -np.Inf
+        self._best_metric = np.inf if self._monitor_mode == "min" else -np.inf
         self._stopping_steps = 0
         self._steps_per_epoch = len(data_generator)
         self._stop_training = False
@@ -152,7 +152,7 @@ class BaseModel(nn.Module):
         self._epoch_index = 0
         if self._eval_steps is None:
             self._eval_steps = self._steps_per_epoch
-        
+
         logging.info("Start training: {} batches/epoch".format(self._steps_per_epoch))
         logging.info("************ Epoch=1 start ************")
         for epoch in range(epochs):
@@ -265,7 +265,7 @@ class BaseModel(nn.Module):
 
     def save_weights(self, checkpoint):
         torch.save(self.state_dict(), checkpoint)
-    
+
     def load_weights(self, checkpoint):
         self.to(self.device)
         state_dict = torch.load(checkpoint, map_location="cpu")
@@ -281,7 +281,7 @@ class BaseModel(nn.Module):
 
     def count_parameters(self, count_embedding=True):
         total_params = 0
-        for name, param in self.named_parameters(): 
+        for name, param in self.named_parameters():
             if not count_embedding and "embedding" in name:
                 continue
             if param.requires_grad:
